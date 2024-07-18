@@ -30,6 +30,8 @@ from aptos_sdk.type_tag import StructTag, TypeTag
 
 from .common import FAUCET_URL, NODE_URL
 
+MY_LOCAL_ACCOUNT_MINT_TOKENS = 1000000
+MY_WEB_ACCOUNT_GET_TOKENS = 1000000
 
 class CoinClient(RestClient):
     async def register_coin(self, coin_address: AccountAddress, sender: Account) -> str:
@@ -38,7 +40,7 @@ class CoinClient(RestClient):
         payload = EntryFunction.natural(
             "0x1::managed_coin",
             "register",
-            [TypeTag(StructTag.from_str(f"{coin_address}::moon_coin::MoonCoin"))],
+            [TypeTag(StructTag.from_str(f"{coin_address}::stable_coin1::StableCoin1"))],
             [],
         )
         signed_transaction = await self.create_bcs_signed_transaction(
@@ -54,7 +56,7 @@ class CoinClient(RestClient):
         payload = EntryFunction.natural(
             "0x1::managed_coin",
             "mint",
-            [TypeTag(StructTag.from_str(f"{minter.address()}::moon_coin::MoonCoin"))],
+            [TypeTag(StructTag.from_str(f"{minter.address()}::stable_coin1::StableCoin1"))],
             [
                 TransactionArgument(receiver_address, Serializer.struct),
                 TransactionArgument(amount, Serializer.u64),
@@ -74,34 +76,43 @@ class CoinClient(RestClient):
 
         balance = await self.account_resource(
             account_address,
-            f"0x1::coin::CoinStore<{coin_address}::moon_coin::MoonCoin>",
+            f"0x1::coin::CoinStore<{coin_address}::stable_coin1::StableCoin1>",
         )
         return balance["data"]["coin"]["value"]
 
 
 async def main(moon_coin_path: str):
-    alice = Account.generate()
-    bob = Account.generate()
+
+    my_local_account_private_key = os.getenv('MY_LOCAL_ACCOUNT_PRIVATE_KEY')
+    my_web_account_address = os.getenv('MY_WEB_ACCOUNT_ADDRESS')
+
+    if my_local_account_private_key is None or my_web_account_address is None:
+        print("Please set the MY_LOCAL_ACCOUNT_PRIVATE_KEY and MY_WEB_ACCOUNT_ADDRESS environment variables.")
+        return
+
+    my_local_account = Account.load_key(my_local_account_private_key)
+    my_web_account_adderss = AccountAddress.from_str(my_web_account_address)
 
     print("\n=== Addresses ===")
-    print(f"Alice: {alice.address()}")
-    print(f"Bob: {bob.address()}")
+    print(f"My local account: {my_local_account.address()}")
+    print(f"My web account: {my_web_account_adderss}")
 
     rest_client = CoinClient(NODE_URL)
     faucet_client = FaucetClient(FAUCET_URL, rest_client)
 
-    alice_fund = faucet_client.fund_account(alice.address(), 20_000_000)
-    bob_fund = faucet_client.fund_account(bob.address(), 20_000_000)
-    await asyncio.gather(*[alice_fund, bob_fund])
+    my_local_account_fund = faucet_client.fund_account(my_local_account.address(), 20_000_000)
+    my_web_account_fund = faucet_client.fund_account(my_web_account_adderss, 20_000_000_000)
+    await asyncio.gather(*[my_local_account_fund, my_web_account_fund])
 
     if AptosCLIWrapper.does_cli_exist():
-        AptosCLIWrapper.compile_package(moon_coin_path, {"MoonCoin": alice.address()})
+        AptosCLIWrapper.compile_package(moon_coin_path, {"StableCoin1": my_local_account.address()})
     else:
-        input("\nUpdate the module with Alice's address, compile, and press enter.")
+        input("\nUpdate the module with My local account's address, compile, and press enter.")
+    print("\nCompiled StableCoin1 module.")
 
     # :!:>publish
     module_path = os.path.join(
-        moon_coin_path, "build", "Examples", "bytecode_modules", "moon_coin.mv"
+        moon_coin_path, "build", "Examples", "bytecode_modules", "stable_coin1.mv"
     )
     with open(module_path, "rb") as f:
         module = f.read()
@@ -112,37 +123,37 @@ async def main(moon_coin_path: str):
     with open(metadata_path, "rb") as f:
         metadata = f.read()
 
-    print("\nPublishing MoonCoin package.")
+    print("\nPublishing StableCoin1 package.")
     package_publisher = PackagePublisher(rest_client)
-    txn_hash = await package_publisher.publish_package(alice, metadata, [module])
+    txn_hash = await package_publisher.publish_package(my_local_account, metadata, [module])
     await rest_client.wait_for_transaction(txn_hash)
     # <:!:publish
+    print("Published StableCoin1 package.")
 
-    print("\nBob registers the newly created coin so he can receive it from Alice.")
-    txn_hash = await rest_client.register_coin(alice.address(), bob)
+    print("my_local_account mints some of the new coin.")
+    txn_hash = await rest_client.mint_coin(my_local_account, my_local_account.address(), MY_LOCAL_ACCOUNT_MINT_TOKENS)
     await rest_client.wait_for_transaction(txn_hash)
-    balance = await rest_client.get_balance(alice.address(), bob.address())
-    print(f"Bob's initial MoonCoin balance: {balance}")
 
-    print("Alice mints Bob some of the new coin.")
-    txn_hash = await rest_client.mint_coin(alice, bob.address(), 100)
-    await rest_client.wait_for_transaction(txn_hash)
-    balance = await rest_client.get_balance(alice.address(), bob.address())
-    print(f"Bob's updated MoonCoin balance: {balance}")
 
     try:
-        maybe_balance = await rest_client.get_balance(alice.address(), alice.address())
+        maybe_balance = await rest_client.get_balance(my_local_account.address(), my_local_account.address())
     except Exception:
         maybe_balance = None
-    print(f"Bob will transfer to Alice, her balance: {maybe_balance}")
+    print(f"my_local_account's updated StableCoin1 balance: {maybe_balance}")
+
+
+    print("my_local_account transfers some of the new coin to my web account.")
+
     txn_hash = await rest_client.transfer_coins(
-        bob, alice.address(), f"{alice.address()}::moon_coin::MoonCoin", 5
-    )
+            my_local_account, my_web_account_adderss, f"{my_local_account.address()}::stable_coin1::StableCoin1", MY_WEB_ACCOUNT_GET_TOKENS
+        )
     await rest_client.wait_for_transaction(txn_hash)
-    balance = await rest_client.get_balance(alice.address(), alice.address())
-    print(f"Alice's updated MoonCoin balance: {balance}")
-    balance = await rest_client.get_balance(alice.address(), bob.address())
-    print(f"Bob's updated MoonCoin balance: {balance}")
+
+
+    balance = await rest_client.get_balance(my_local_account.address(), my_local_account.address())
+    print(f"my_local_account's updated StableCoin1 balance: {balance}")
+    balance = await rest_client.get_balance(my_local_account.address(), my_web_account_adderss)
+    print(f"My web account's updated StableCoin1 balance: {balance}")
 
 
 if __name__ == "__main__":

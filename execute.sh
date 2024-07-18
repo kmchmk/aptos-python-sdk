@@ -1,0 +1,1 @@
+poetry run python -m examples.your_coin ./stable_coin
