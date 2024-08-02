@@ -130,6 +130,9 @@ async def main(moon_coin_path: str):
     # <:!:publish
     print("Published StableCoin1 package.")
 
+    txn_hash = await rest_client.register_coin(my_local_account.address(), my_local_account)
+    await rest_client.wait_for_transaction(txn_hash)
+
     print("my_local_account mints some of the new coin.")
     txn_hash = await rest_client.mint_coin(my_local_account, my_local_account.address(), MY_LOCAL_ACCOUNT_MINT_TOKENS)
     await rest_client.wait_for_transaction(txn_hash)
